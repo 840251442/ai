@@ -1,0 +1,25 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules*
+/.yalc
+# /dist
+yalc.lock
+package-lock.json
+# production
+jsconfig.json
+# misc
+.DS_Store
+.htaccess
+npm-debug.log*
+.roadhogrc
+.idea/
+yarn.lock
+.vscode
+.cursor
+.history
+coverage
+docs/
+attributeError.text
+.trae
+scripts/stateUsageAnalysis.json
