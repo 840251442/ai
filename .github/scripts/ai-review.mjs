@@ -56,25 +56,31 @@ const REVIEW_PROMPT = `你是一位拥有 15 年经验的资深前端代码审�
 ## 输出要求
 - 只审查变更的代码，不审查未修改的部分
 - 使用中文输出
-- 按以下格式输出：
+- 仅输出 JSON，不要输出 markdown，不要输出代码块标记
+- JSON 结构必须严格如下：
+{
+  "overall": "一句话总体评价",
+  "score": 0-10 的数字,
+  "findings": [
+    {
+      "severity": "high|medium|low",
+      "title": "问题标题",
+      "detail": "问题描述（1-3句）",
+      "suggestion": "可执行修复建议（尽量具体）"
+    }
+  ],
+  "highlights": ["亮点1", "亮点2"]
+}
 
-### 📊 总体评价
-综合评分：X/10，一句话总结
-
-### 🚨 严重问题（必须修复）
-指出文件名和行号，给出修复代码示例
-
-### ⚠️ 建议改进（推荐修复）
-不会导致故障但应该优化的问题
-
-### 💡 优化建议（锦上添花）
-可以提升代码质量但非必须
-
-### ✅ 亮点
-代码中做得好的地方
-
-如果代码质量很好没有问题，也请明确说明并给出肯定。
+规则：
+- findings 只包含“需要改进”的点；没有问题时返回空数组 []
+- 不要虚构文件路径和行号
+- 最多返回 12 条 findings
 `;
+
+const BOT_COMMENT_TAG = "<!-- ai-reviewer-bot -->";
+const CHECKLIST_START = "<!-- ai-reviewer-checklist:start -->";
+const CHECKLIST_END = "<!-- ai-reviewer-checklist:end -->";
 
 async function getDiff() {
   const diff = readFileSync("/tmp/pr.diff", "utf-8");
@@ -136,10 +142,33 @@ async function callQwenAPI(diff) {
   }
 
   const data = await response.json();
-  return data.choices[0].message.content;
-}
+  const content = data?.choices?.[0]?.message?.content ?? "";
 
-const BOT_COMMENT_TAG = "<!-- ai-reviewer-bot -->";
+  // 兼容模型偶发返回 ```json 包裹
+  const cleaned = content
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/\s*```$/, "")
+    .trim();
+
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    return {
+      overall: "模型返回非结构化内容，已降级为单条建议。",
+      score: 6,
+      findings: [
+        {
+          severity: "medium",
+          title: "模型输出格式异常",
+          detail: cleaned.slice(0, 1500),
+          suggestion: "请检查 prompt 或切换模型后重试。",
+        },
+      ],
+      highlights: [],
+    };
+  }
+}
 
 async function deleteOldComments() {
   // 获取已有评论，删除上一次 bot 的评论避免重复
@@ -173,10 +202,7 @@ async function deleteOldComments() {
   }
 }
 
-async function postComment(body) {
-  // 先清理旧评论
-  await deleteOldComments();
-
+async function postIssueComment(body) {
   const response = await fetch(
     `https://api.github.com/repos/${REPO}/issues/${PR_NUMBER}/comments`,
     {
@@ -186,9 +212,7 @@ async function postComment(body) {
         "Content-Type": "application/json",
         Accept: "application/vnd.github.v3+json",
       },
-      body: JSON.stringify({
-        body: `${BOT_COMMENT_TAG}\n## 🤖 AI Code Review\n\n${body}`,
-      }),
+      body: JSON.stringify({ body }),
     }
   );
 
@@ -197,7 +221,82 @@ async function postComment(body) {
     throw new Error(`GitHub API error: ${response.status} - ${error}`);
   }
 
-  console.log("Comment posted successfully!");
+  return response.json();
+}
+
+async function getPullRequest() {
+  const response = await fetch(`https://api.github.com/repos/${REPO}/pulls/${PR_NUMBER}`, {
+    headers: {
+      Authorization: `Bearer ${GITHUB_TOKEN}`,
+      Accept: "application/vnd.github.v3+json",
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Get PR error: ${response.status} - ${error}`);
+  }
+
+  return response.json();
+}
+
+function buildChecklistSection(findings, commentUrls) {
+  if (!findings.length) {
+    return `${CHECKLIST_START}
+## AI Review Tasks
+
+本次 AI Review 未发现需要改进的项。
+${CHECKLIST_END}`;
+  }
+
+  const lines = findings.map((item, index) => {
+    const level = String(item.severity || "medium").toUpperCase();
+    const title = item.title || `改进项 ${index + 1}`;
+    const commentUrl = commentUrls[index];
+    const link = commentUrl ? ` ([查看评论](${commentUrl}))` : "";
+    return `- [ ] [${level}] ${title}${link}`;
+  });
+
+  return `${CHECKLIST_START}
+## AI Review Tasks
+
+请逐项确认并勾选，未勾选项会在 PR 任务计数中显示。
+
+${lines.join("\n")}
+${CHECKLIST_END}`;
+}
+
+function upsertChecklistToBody(originalBody, section) {
+  const body = originalBody || "";
+  const start = body.indexOf(CHECKLIST_START);
+  const end = body.indexOf(CHECKLIST_END);
+
+  if (start >= 0 && end > start) {
+    const before = body.slice(0, start).trimEnd();
+    const after = body.slice(end + CHECKLIST_END.length).trimStart();
+    const merged = [before, section, after].filter(Boolean).join("\n\n");
+    return merged.trim();
+  }
+
+  if (!body.trim()) return section;
+  return `${body.trim()}\n\n${section}`;
+}
+
+async function updatePullRequestBody(newBody) {
+  const response = await fetch(`https://api.github.com/repos/${REPO}/pulls/${PR_NUMBER}`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${GITHUB_TOKEN}`,
+      "Content-Type": "application/json",
+      Accept: "application/vnd.github.v3+json",
+    },
+    body: JSON.stringify({ body: newBody }),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`Update PR body error: ${response.status} - ${error}`);
+  }
 }
 
 async function main() {
@@ -214,9 +313,40 @@ async function main() {
 
   console.log("🤖 Calling Qwen API for review...");
   const review = await callQwenAPI(diff);
+  const findings = Array.isArray(review.findings) ? review.findings.slice(0, 12) : [];
 
-  console.log("📝 Posting comment to PR...");
-  await postComment(review);
+  // 清理旧 bot 评论，避免多轮运行重复堆积
+  await deleteOldComments();
+
+  console.log("📝 Posting one comment per finding...");
+  const commentUrls = [];
+
+  if (findings.length === 0) {
+    const comment = await postIssueComment(
+      `${BOT_COMMENT_TAG}\n## 🤖 AI Code Review\n\n### 📊 总体评价\n${review.overall || "代码质量良好，未发现需要改进的问题。"}\n\n综合评分：${Number(review.score ?? 8)}/10\n\n### ✅ 亮点\n${Array.isArray(review.highlights) && review.highlights.length ? review.highlights.map((x) => `- ${x}`).join("\n") : "- 结构清晰，可维护性较好"}`
+    );
+    commentUrls.push(comment.html_url);
+  } else {
+    let index = 1;
+    for (const item of findings) {
+      const level = String(item.severity || "medium").toUpperCase();
+      const body = `${BOT_COMMENT_TAG}\n## 🤖 AI Review 改进项 ${index}\n\n- [ ] **${level}** ${item.title || `改进项 ${index}`}\n\n**问题描述**\n${item.detail || "无"}\n\n**修复建议**\n${item.suggestion || "请结合上下文修复。"}`;
+      const comment = await postIssueComment(body);
+      commentUrls.push(comment.html_url);
+      index += 1;
+    }
+
+    // 追加一条总览评论，方便快速浏览
+    await postIssueComment(
+      `${BOT_COMMENT_TAG}\n## 🤖 AI Code Review 总览\n\n### 📊 总体评价\n${review.overall || "已完成本次变更审查。"}\n\n综合评分：${Number(review.score ?? 7)}/10\n\n改进项数量：${findings.length}`
+    );
+  }
+
+  console.log("🧾 Updating PR checklist...");
+  const pr = await getPullRequest();
+  const checklistSection = buildChecklistSection(findings, commentUrls);
+  const newBody = upsertChecklistToBody(pr.body, checklistSection);
+  await updatePullRequestBody(newBody);
 
   console.log("✅ Done!");
 }
