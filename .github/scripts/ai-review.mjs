@@ -117,7 +117,7 @@ async function callQwenAPI(diff) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "qwen-turbo",
+        model: "qwen-coder-plus",
         messages: [
           { role: "system", content: REVIEW_PROMPT },
           {
