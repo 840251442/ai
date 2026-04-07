@@ -1,0 +1,42 @@
+{
+  "name": "knowledge-base-mcp",
+  "version": "1.0.0",
+  "description": "A Model Context Protocol (MCP) server for querying your local knowledge base documents",
+  "main": "dist/index.js",
+  "bin": {
+    "knowledge-base-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node src/index.ts",
+    "start": "node dist/index.js",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "knowledge-base",
+    "model-context-protocol",
+    "ai",
+    "documents",
+    "search"
+  ],
+  "author": "",
+  "license": "MIT",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "glob": "^11.0.0",
+    "gray-matter": "^4.0.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0",
+    "ts-node": "^10.9.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
