@@ -56,7 +56,7 @@ const REVIEW_PROMPT = `你是一位拥有 15 年经验的资深前端代码审�
 ## 输出要求
 - 只审查变更的代码，不审查未修改的部分
 - 使用中文输出
-- 仅输出 JSON，不要输出 markdown，不要输出代码块标记
+- 仅输出 JSON，不要在 JSON 外层包裹 markdown 代码块标记
 - JSON 结构必须严格如下：
 {
   "overall": "一句话总体评价",
@@ -65,8 +65,8 @@ const REVIEW_PROMPT = `你是一位拥有 15 年经验的资深前端代码审�
     {
       "severity": "high|medium|low",
       "title": "问题标题",
-      "detail": "问题描述（1-3句）",
-      "suggestion": "可执行修复建议（尽量具体）"
+      "detail": "问题描述（1-3句），如有代码示例请使用 markdown 代码块格式",
+      "suggestion": "可执行修复建议（尽量具体），如有代码示例请使用 markdown 代码块格式"
     }
   ],
   "highlights": ["亮点1", "亮点2"]
@@ -76,6 +76,7 @@ const REVIEW_PROMPT = `你是一位拥有 15 年经验的资深前端代码审�
 - findings 只包含“需要改进”的点；没有问题时返回空数组 []
 - 不要虚构文件路径和行号
 - 最多返回 12 条 findings
+- detail 和 suggestion 字段中的代码片段必须用 markdown 代码块包裹，并标注语言类型（如 \`\`\`typescript、\`\`\`javascript 等）
 `;
 
 const BOT_COMMENT_TAG = "<!-- ai-reviewer-bot -->";
