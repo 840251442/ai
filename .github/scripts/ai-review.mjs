@@ -82,8 +82,6 @@ const REVIEW_PROMPT = `你是一位拥有 15 年经验的资深前端代码审�
 `;
 
 const BOT_COMMENT_TAG = "<!-- ai-reviewer-bot -->";
-const CHECKLIST_START = "<!-- ai-reviewer-checklist:start -->";
-const CHECKLIST_END = "<!-- ai-reviewer-checklist:end -->";
 
 async function getDiff() {
   const diff = readFileSync("/tmp/pr.diff", "utf-8");
@@ -241,65 +239,6 @@ async function getPullRequest() {
   }
 
   return response.json();
-}
-
-function buildChecklistSection(findings, commentUrls) {
-  if (!findings.length) {
-    return `${CHECKLIST_START}
-## AI Review Tasks
-
-本次 AI Review 未发现需要改进的项。
-${CHECKLIST_END}`;
-  }
-
-  const lines = findings.map((item, index) => {
-    const level = String(item.severity || "medium").toUpperCase();
-    const title = item.title || `改进项 ${index + 1}`;
-    const commentUrl = commentUrls[index];
-    const link = commentUrl ? ` ([查看评论](${commentUrl}))` : "";
-    return `- [ ] [${level}] ${title}${link}`;
-  });
-
-  return `${CHECKLIST_START}
-## AI Review Tasks
-
-请逐项确认并勾选，未勾选项会在 PR 任务计数中显示。
-
-${lines.join("\n")}
-${CHECKLIST_END}`;
-}
-
-function upsertChecklistToBody(originalBody, section) {
-  const body = originalBody || "";
-  const start = body.indexOf(CHECKLIST_START);
-  const end = body.indexOf(CHECKLIST_END);
-
-  if (start >= 0 && end > start) {
-    const before = body.slice(0, start).trimEnd();
-    const after = body.slice(end + CHECKLIST_END.length).trimStart();
-    const merged = [before, section, after].filter(Boolean).join("\n\n");
-    return merged.trim();
-  }
-
-  if (!body.trim()) return section;
-  return `${body.trim()}\n\n${section}`;
-}
-
-async function updatePullRequestBody(newBody) {
-  const response = await fetch(`https://api.github.com/repos/${REPO}/pulls/${PR_NUMBER}`, {
-    method: "PATCH",
-    headers: {
-      Authorization: `Bearer ${GITHUB_TOKEN}`,
-      "Content-Type": "application/json",
-      Accept: "application/vnd.github.v3+json",
-    },
-    body: JSON.stringify({ body: newBody }),
-  });
-
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Update PR body error: ${response.status} - ${error}`);
-  }
 }
 
 function buildFindingComment(item) {
@@ -487,14 +426,7 @@ async function main() {
   await deleteOldReviews();
 
   console.log("📝 Creating PR review with inline threads...");
-  const createdReview = await createPRReview(findings, review, headSha);
-  const reviewUrl = `https://github.com/${REPO}/pull/${PR_NUMBER}#pullrequestreview-${createdReview.id}`;
-  const commentUrls = findings.map(() => reviewUrl);
-
-  console.log("🧾 Updating PR checklist...");
-  const checklistSection = buildChecklistSection(findings, commentUrls);
-  const newBody = upsertChecklistToBody(pr.body, checklistSection);
-  await updatePullRequestBody(newBody);
+  await createPRReview(findings, review, headSha);
 
   console.log("✅ Done!");
 }
